@@ -22,6 +22,7 @@ const navItems = [
   { href: "/admin/about", label: "About Us", icon: Info },
   { href: "/admin/services", label: "Services", icon: Plane },
   { href: "/admin/faqs", label: "FAQs", icon: HelpCircle },
+  { href: "/admin/enquery", label: "Enquiries", icon: HelpCircle },
 ];
 
 interface AdminLayoutProps {
