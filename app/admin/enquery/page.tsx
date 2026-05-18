@@ -4,6 +4,9 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import emailjs from "@emailjs/browser"; // Direct Frontend Email Client
 import { 
   Loader2, 
   Eye, 
@@ -15,7 +18,10 @@ import {
   Mail, 
   Phone, 
   MessageSquare,
-  ArrowRight
+  ArrowRight,
+  Helicopter,
+  Send,
+  History
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -25,7 +31,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-const API_URL = "https://aviation.braventra.in/api/enquiries";
+// API Endpoints for raw enquiry data
+const CHARTER_API_URL = "https://aviation.braventra.in/api/enquiries";
+const HELI_API_URL = "https://aviation.braventra.in/api/helicopter-enquiries";
+
+// Replace these with your actual keys from your EmailJS Account Dashboard
+const EMAILJS_SERVICE_ID = "YOUR_EMAILJS_SERVICE_ID";
+const EMAILJS_TEMPLATE_ID = "YOUR_EMAILJS_TEMPLATE_ID";
+const EMAILJS_PUBLIC_KEY = "YOUR_EMAILJS_PUBLIC_KEY";
 
 interface FlightLeg {
   leg_number: number;
@@ -37,11 +50,18 @@ interface FlightLeg {
   aircraft: string;
 }
 
-interface Enquiry {
+interface EmailTrail {
+  id: string | number;
+  sender: "admin" | "customer";
+  message: string;
+  sent_at: string;
+}
+
+interface CharterEnquiry {
   id: number;
   enquiry_id: string;
   trip_type: "oneway" | "roundtrip";
-  one_way_legs: string | FlightLeg[]; // Backend returns stringified JSON
+  one_way_legs: string | FlightLeg[];
   return_legs: string | FlightLeg[] | null;
   first_name: string;
   last_name: string;
@@ -50,57 +70,181 @@ interface Enquiry {
   message: string | null;
   status: "pending" | "contacted" | "confirmed" | "cancelled";
   created_at: string;
+  email_trails?: EmailTrail[]; 
+}
+
+interface HelicopterEnquiry {
+  id: number;
+  enquiry_id: string;
+  from: string;
+  to: string;
+  date_of_journey: string;
+  time_of_journey: string;
+  passengers: number;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  message: string | null;
+  status: "pending" | "contacted" | "confirmed" | "cancelled";
+  created_at: string;
+  email_trails?: EmailTrail[];
 }
 
 export default function EnquiriesPage() {
-  const [loading, setLoading] = useState(true);
-  const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
-  const [selectedEnquiry, setSelectedEnquiry] = useState<Enquiry | null>(null);
-  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [loadingCharter, setLoadingCharter] = useState(true);
+  const [loadingHeli, setLoadingHeli] = useState(true);
+  const [charterEnquiries, setCharterEnquiries] = useState<CharterEnquiry[]>([]);
+  const [heliEnquiries, setHeliEnquiries] = useState<HelicopterEnquiry[]>([]);
+  
+  // Inspection Modals Handling State
+  const [selectedCharter, setSelectedCharter] = useState<CharterEnquiry | null>(null);
+  const [selectedHeli, setSelectedHeli] = useState<HelicopterEnquiry | null>(null);
+  const [charterModalOpen, setCharterModalOpen] = useState(false);
+  const [heliModalOpen, setHeliModalOpen] = useState(false);
+
+  // Email Administration Form States
+  const [replyMessage, setReplyMessage] = useState("");
+  const [sendingEmail, setSendingEmail] = useState(false);
 
   useEffect(() => {
-    fetchEnquiries();
+    fetchCharterEnquiries();
+    fetchHeliEnquiries();
   }, []);
 
-  const fetchEnquiries = async () => {
-    setLoading(true);
+  // Helper: Injects saved local storage email logs into backend-fetched lists
+  const mergeLocalTrails = (fetchedData: any[], type: "charter" | "helicopter") => {
+    return fetchedData.map((item) => {
+      const storageKey = `email_trail_${type}_${item.enquiry_id}`;
+      const savedTrails = localStorage.getItem(storageKey);
+      return {
+        ...item,
+        email_trails: savedTrails ? JSON.parse(savedTrails) : [],
+        // Dynamically visually change status if an admin response exists locally
+        status: savedTrails && JSON.parse(savedTrails).length > 0 ? "contacted" : item.status
+      };
+    });
+  };
+
+  const fetchCharterEnquiries = async () => {
+    setLoadingCharter(true);
     try {
-      const res = await fetch(API_URL);
+      const res = await fetch(CHARTER_API_URL);
       const json = await res.json();
-      if (Array.isArray(json)) {
-        setEnquiries(json);
-      } else {
-        setEnquiries([]);
-      }
+      const baseData = Array.isArray(json) ? json : [];
+      setCharterEnquiries(mergeLocalTrails(baseData, "charter"));
     } catch (err) {
-      console.error("Fetch error:", err);
-      toast.error("Failed to load enquiries");
+      console.error("Fetch charter error:", err);
+      toast.error("Failed to load charter enquiries");
     } finally {
-      setLoading(false);
+      setLoadingCharter(false);
     }
   };
 
-  const onDelete = async (id: string | number, e: React.MouseEvent) => {
-    e.stopPropagation(); // Avoid triggering row clicks
-    if (!confirm("Are you sure you want to delete this enquiry permanently?")) return;
-    
+  const fetchHeliEnquiries = async () => {
+    setLoadingHeli(true);
     try {
-      const response = await fetch(`${API_URL}/${id}`, { method: "DELETE" });
+      const res = await fetch(HELI_API_URL);
+      const json = await res.json();
+      const baseData = Array.isArray(json) ? json : [];
+      setHeliEnquiries(mergeLocalTrails(baseData, "helicopter"));
+    } catch (err) {
+      console.error("Fetch helicopter error:", err);
+      toast.error("Failed to load helicopter enquiries");
+    } finally {
+      setLoadingHeli(false);
+    }
+  };
+
+  const onDeleteCharter = async (id: string | number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("Are you sure you want to delete this charter enquiry permanently?")) return;
+    try {
+      const response = await fetch(`${CHARTER_API_URL}/${id}`, { method: "DELETE" });
       if (!response.ok) throw new Error("Delete failed");
-      
-      toast.success("Enquiry deleted successfully");
-      fetchEnquiries();
+      localStorage.removeItem(`email_trail_charter_${id}`); // Clean local logs
+      toast.success("Charter enquiry deleted successfully");
+      fetchCharterEnquiries();
     } catch (error) {
       toast.error("Delete sequence failed");
     }
   };
 
-  const handleViewDetails = (enquiry: Enquiry) => {
-    setSelectedEnquiry(enquiry);
-    setDetailModalOpen(true);
+  const onDeleteHeli = async (id: string | number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("Are you sure you want to delete this helicopter enquiry permanently?")) return;
+    try {
+      const response = await fetch(`${HELI_API_URL}/${id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Delete failed");
+      localStorage.removeItem(`email_trail_helicopter_${id}`); // Clean local logs
+      toast.success("Helicopter enquiry deleted successfully");
+      fetchHeliEnquiries();
+    } catch (error) {
+      toast.error("Delete sequence failed");
+    }
   };
 
-  // Safe JSON parser helper for MySQL TEXT fields
+  // 100% Pure Frontend Email Transmit & History Storage Sequence
+  const handleSendEmail = async (type: "charter" | "helicopter", enquiryId: string, recipientEmail: string, customerName: string) => {
+    if (!replyMessage.trim()) {
+      toast.error("Please enter a reply message before transmitting.");
+      return;
+    }
+
+    setSendingEmail(true);
+
+    // Dynamic key parameters mapped directly to your EmailJS Template structure
+    const templateParams = {
+      to_email: recipientEmail,
+      customer_name: customerName,
+      enquiry_id: enquiryId,
+      reply_message: replyMessage,
+    };
+
+    try {
+      // Direct client side delivery line through SMTP configuration rules
+      await emailjs.send(
+        EMAILJS_SERVICE_ID,
+        EMAILJS_TEMPLATE_ID,
+        templateParams,
+        EMAILJS_PUBLIC_KEY
+      );
+
+      // Save tracking trail securely directly into the LocalStorage space
+      const storageKey = `email_trail_${type}_${enquiryId}`;
+      const existingLogsRaw = localStorage.getItem(storageKey);
+      const existingLogs: EmailTrail[] = existingLogsRaw ? JSON.parse(existingLogsRaw) : [];
+      
+      const newLog: EmailTrail = {
+        id: Date.now(),
+        sender: "admin",
+        message: replyMessage,
+        sent_at: new Date().toISOString()
+      };
+
+      const updatedLogs = [...existingLogs, newLog];
+      localStorage.setItem(storageKey, JSON.stringify(updatedLogs));
+
+      toast.success(`Reply email safely dispatched directly to ${recipientEmail}`);
+      setReplyMessage("");
+
+      // Re-map localized list updates immediately for seamless UI feel
+      if (type === "charter") {
+        setCharterEnquiries(prev => prev.map(e => e.enquiry_id === enquiryId ? { ...e, status: "contacted", email_trails: updatedLogs } : e));
+        if (selectedCharter) setSelectedCharter({ ...selectedCharter, status: "contacted", email_trails: updatedLogs });
+      } else {
+        setHeliEnquiries(prev => prev.map(e => e.enquiry_id === enquiryId ? { ...e, status: "contacted", email_trails: updatedLogs } : e));
+        if (selectedHeli) setSelectedHeli({ ...selectedHeli, status: "contacted", email_trails: updatedLogs });
+      }
+
+    } catch (error) {
+      console.error("EmailJS execution breakdown:", error);
+      toast.error("Failed to direct-transmit. Check EmailJS variables configuration keys.");
+    } finally {
+      setSendingEmail(false);
+    }
+  };
+
   const parseLegs = (data: string | FlightLeg[]): FlightLeg[] => {
     if (typeof data === "string") {
       try {
@@ -121,232 +265,224 @@ export default function EnquiriesPage() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <Loader2 className="animate-spin text-primary" />
-      </div>
-    );
-  }
-
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <PageHeader
-        title="Flight Enquiries"
-        description="View and inspect incoming flight bookings and customer specifications."
+        title=" Enquiries Desk"
+        description="View and manage inbound flight reservations across your standard business jets and helicopter operators fleets."
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Received Enquiries ({enquiries.length})</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto rounded-md border border-border">
-            <table className="w-full text-sm text-left border-collapse">
-              <thead>
-                <tr className="bg-muted/50 border-b border-border text-xs uppercase tracking-wider text-muted-foreground font-semibold">
-                  <th className="p-4">ID</th>
-                  <th className="p-4">Customer</th>
-                  <th className="p-4">Trip Type</th>
-                  <th className="p-4">Status</th>
-                  <th className="p-4">Date Received</th>
-                  <th className="p-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {enquiries.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="text-center p-8 text-muted-foreground">
-                      No customer enquiries have been logged yet.
-                    </td>
-                  </tr>
-                ) : (
-                  enquiries.map((enquiry) => (
-                    <tr 
-                      key={enquiry.id} 
-                      className="hover:bg-muted/40 transition-colors cursor-pointer group"
-                      onClick={() => handleViewDetails(enquiry)}
-                    >
-                      <td className="p-4 font-mono text-xs font-semibold text-primary">
-                        {enquiry.enquiry_id}
-                      </td>
-                      <td className="p-4">
-                        <div className="font-medium text-foreground">
-                          {enquiry.first_name} {enquiry.last_name}
-                        </div>
-                        <div className="text-xs text-muted-foreground">{enquiry.email}</div>
-                      </td>
-                      <td className="p-4">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium uppercase tracking-wide border ${
-                          enquiry.trip_type === "roundtrip" ? "bg-purple-50 text-purple-700 border-purple-200" : "bg-slate-50 text-slate-700 border-slate-200"
-                        }`}>
-                          {enquiry.trip_type === "roundtrip" ? "Round Trip" : "One Way"}
-                        </span>
-                      </td>
-                      <td className="p-4">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium uppercase tracking-wide border ${getStatusBadgeClass(enquiry.status)}`}>
-                          {enquiry.status || "pending"}
-                        </span>
-                      </td>
-                      <td className="p-4 text-muted-foreground text-xs">
-                        {new Date(enquiry.created_at).toLocaleDateString(undefined, {
-                          dateStyle: "medium"
-                        })}
-                      </td>
-                      <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleViewDetails(enquiry)}
-                            className="h-8 w-8 text-muted-foreground hover:text-primary"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={(e) => onDelete(enquiry.enquiry_id, e)}
-                            className="h-8 w-8 text-destructive hover:bg-destructive/10"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+      <Tabs defaultValue="charter" className="w-full">
+        <TabsList className="grid grid-cols-2 max-w-md mb-4 bg-muted">
+          <TabsTrigger value="charter" className="flex items-center gap-2">
+            <Plane className="w-4 h-4" />  Charters Enquries
+          </TabsTrigger>
+          <TabsTrigger value="helicopter" className="flex items-center gap-2">
+            <Helicopter className="w-4 h-4" /> Helicopter Enquries
+          </TabsTrigger>
+        </TabsList>
 
-      {/* INSPECTION DETAIL DIALOG MODAL */}
-      <Dialog open={detailModalOpen} onOpenChange={setDetailModalOpen}>
+        {/* ----------------- TAB: JET CHARTERS ----------------- */}
+        <TabsContent value="charter">
+          {loadingCharter ? (
+            <div className="flex h-64 items-center justify-center"><Loader2 className="animate-spin text-primary" /></div>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>Received Jet Enquiries ({charterEnquiries.length})</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto rounded-md border border-border">
+                  <table className="w-full text-sm text-left border-collapse">
+                    <thead>
+                      <tr className="bg-muted/50 border-b border-border text-xs uppercase tracking-wider text-muted-foreground font-semibold">
+                        <th className="p-4">ID</th>
+                        <th className="p-4">Customer</th>
+                        <th className="p-4">Trip Type</th>
+                        <th className="p-4">Status</th>
+                        <th className="p-4">Date Received</th>
+                        <th className="p-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {charterEnquiries.length === 0 ? (
+                        <tr><td colSpan={6} className="text-center p-8 text-muted-foreground">No customer jet enquiries have been logged yet.</td></tr>
+                      ) : (
+                        charterEnquiries.map((enquiry) => (
+                          <tr key={enquiry.id} className="hover:bg-muted/40 transition-colors cursor-pointer group" onClick={() => { setSelectedCharter(enquiry); setReplyMessage(""); setCharterModalOpen(true); }}>
+                            <td className="p-4 font-mono text-xs font-semibold text-primary">{enquiry.enquiry_id}</td>
+                            <td className="p-4">
+                              <div className="font-medium text-foreground">{enquiry.first_name} {enquiry.last_name}</div>
+                              <div className="text-xs text-muted-foreground">{enquiry.email}</div>
+                            </td>
+                            <td className="p-4">
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium uppercase tracking-wide border ${enquiry.trip_type === "roundtrip" ? "bg-purple-50 text-purple-700 border-purple-200" : "bg-slate-50 text-slate-700 border-slate-200"}`}>
+                                {enquiry.trip_type === "roundtrip" ? "Round Trip" : "One Way"}
+                              </span>
+                            </td>
+                            <td className="p-4">
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium uppercase tracking-wide border ${getStatusBadgeClass(enquiry.status)}`}>
+                                {enquiry.status || "pending"}
+                              </span>
+                            </td>
+                            <td className="p-4 text-muted-foreground text-xs">{new Date(enquiry.created_at).toLocaleDateString(undefined, { dateStyle: "medium" })}</td>
+                            <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
+                              <div className="flex items-center justify-end gap-2">
+                                <Button variant="ghost" size="icon" onClick={() => { setSelectedCharter(enquiry); setReplyMessage(""); setCharterModalOpen(true); }} className="h-8 w-8 text-muted-foreground hover:text-primary"><Eye className="h-4 w-4" /></Button>
+                                <Button variant="ghost" size="icon" onClick={(e) => onDeleteCharter(enquiry.enquiry_id, e)} className="h-8 w-8 text-destructive hover:bg-destructive/10"><Trash2 className="h-4 w-4" /></Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* ----------------- TAB: HELICOPTER ENQUIRIES ----------------- */}
+        <TabsContent value="helicopter">
+          {loadingHeli ? (
+            <div className="flex h-64 items-center justify-center"><Loader2 className="animate-spin text-primary" /></div>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>Helicopter Estimation Enquiries ({heliEnquiries.length})</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto rounded-md border border-border">
+                  <table className="w-full text-sm text-left border-collapse">
+                    <thead>
+                      <tr className="bg-muted/50 border-b border-border text-xs uppercase tracking-wider text-muted-foreground font-semibold">
+                        <th className="p-4">ID</th>
+                        <th className="p-4">Customer</th>
+                        <th className="p-4">Route Path</th>
+                        <th className="p-4">Pax</th>
+                        <th className="p-4">Status</th>
+                        <th className="p-4">Date Received</th>
+                        <th className="p-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {heliEnquiries.length === 0 ? (
+                        <tr><td colSpan={7} className="text-center p-8 text-muted-foreground">No helicopter estimations requests found.</td></tr>
+                      ) : (
+                        heliEnquiries.map((enquiry) => (
+                          <tr key={enquiry.id} className="hover:bg-muted/40 transition-colors cursor-pointer group" onClick={() => { setSelectedHeli(enquiry); setReplyMessage(""); setHeliModalOpen(true); }}>
+                            <td className="p-4 font-mono text-xs font-semibold text-sky-700">{enquiry.enquiry_id}</td>
+                            <td className="p-4">
+                              <div className="font-medium text-foreground">{enquiry.first_name} {enquiry.last_name}</div>
+                              <div className="text-xs text-muted-foreground">{enquiry.phone}</div>
+                            </td>
+                            <td className="p-4 font-medium text-slate-800">
+                              <div className="flex items-center gap-2">
+                                <span className="text-slate-900">{enquiry.from}</span>
+                                <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
+                                <span className="text-slate-900">{enquiry.to}</span>
+                              </div>
+                            </td>
+                            <td className="p-4 font-mono font-medium">{enquiry.passengers}</td>
+                            <td className="p-4">
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium uppercase tracking-wide border ${getStatusBadgeClass(enquiry.status)}`}>
+                                {enquiry.status || "pending"}
+                              </span>
+                            </td>
+                            <td className="p-4 text-muted-foreground text-xs">{new Date(enquiry.created_at).toLocaleDateString(undefined, { dateStyle: "medium" })}</td>
+                            <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
+                              <div className="flex items-center justify-end gap-2">
+                                <Button variant="ghost" size="icon" onClick={() => { setSelectedHeli(enquiry); setReplyMessage(""); setHeliModalOpen(true); }} className="h-8 w-8 text-muted-foreground hover:text-primary"><Eye className="h-4 w-4" /></Button>
+                                <Button variant="ghost" size="icon" onClick={(e) => onDeleteHeli(enquiry.enquiry_id, e)} className="h-8 w-8 text-destructive hover:bg-destructive/10"><Trash2 className="h-4 w-4" /></Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
+
+      {/* ================= MODAL: CHARTER INSPECTOR ================= */}
+      <Dialog open={charterModalOpen} onOpenChange={setCharterModalOpen}>
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          {selectedEnquiry && (
+          {selectedCharter && (
             <>
               <DialogHeader className="border-b border-border pb-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <span className="text-xs font-mono font-bold text-muted-foreground block uppercase tracking-widest">
-                      Inspection Panel
-                    </span>
-                    <DialogTitle className="text-2xl font-bold tracking-tight">
-                      Enquiry {selectedEnquiry.enquiry_id}
-                    </DialogTitle>
+                    <span className="text-xs font-mono font-bold text-muted-foreground block uppercase tracking-widest">Jet Inspection Panel</span>
+                    <DialogTitle className="text-2xl font-bold tracking-tight">Enquiry {selectedCharter.enquiry_id}</DialogTitle>
                   </div>
-                  <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider border ${getStatusBadgeClass(selectedEnquiry.status)}`}>
-                    {selectedEnquiry.status || "pending"}
+                  <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider border ${getStatusBadgeClass(selectedCharter.status)}`}>
+                    {selectedCharter.status || "pending"}
                   </span>
                 </div>
               </DialogHeader>
-
               <div className="space-y-6 pt-2">
-                {/* Contact Layout Card */}
                 <div className="grid sm:grid-cols-2 gap-4 bg-muted/30 border border-border p-4 rounded-xl">
                   <div className="space-y-2">
-                    <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5">
-                      <User className="w-3.5 h-3.5" /> Customer Info
-                    </h3>
-                    <p className="text-base font-semibold text-foreground">
-                      {selectedEnquiry.first_name} {selectedEnquiry.last_name}
-                    </p>
+                    <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5"><User className="w-3.5 h-3.5" /> Customer Info</h3>
+                    <p className="text-base font-semibold text-foreground">{selectedCharter.first_name} {selectedCharter.last_name}</p>
                   </div>
                   <div className="space-y-1.5">
-                    <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5">
-                      <Mail className="w-3.5 h-3.5" /> Communications
-                    </h3>
+                    <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" /> Communications</h3>
                     <div className="text-sm space-y-0.5">
-                      <p className="flex items-center gap-2 text-foreground">
-                        <span className="text-muted-foreground">Email:</span> {selectedEnquiry.email}
-                      </p>
-                      <p className="flex items-center gap-2 text-foreground">
-                        <span className="text-muted-foreground">Phone:</span> {selectedEnquiry.phone}
-                      </p>
+                      <p className="text-foreground"><span className="text-muted-foreground">Email:</span> {selectedCharter.email}</p>
+                      <p className="text-foreground"><span className="text-muted-foreground">Phone:</span> {selectedCharter.phone}</p>
                     </div>
                   </div>
                 </div>
-
-                {/* Flight Path Metrics */}
+                
                 <div className="space-y-4">
-                  <h3 className="text-sm font-bold text-primary uppercase tracking-widest border-b border-border pb-2">
-                    Flight Itinerary Details
-                  </h3>
-
-                  {/* One Way Legs */}
+                  <h3 className="text-sm font-bold text-primary uppercase tracking-widest border-b border-border pb-2">Flight Itinerary Details</h3>
                   <div className="space-y-3">
-                    <h4 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
-                      <span className="h-2 w-2 rounded-full bg-primary inline-block" />
-                      Outbound Journey Legs
-                    </h4>
-                    
-                    {parseLegs(selectedEnquiry.one_way_legs).map((leg, index) => (
+                    <h4 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-primary inline-block" /> Outbound Journey Legs</h4>
+                    {parseLegs(selectedCharter.one_way_legs).map((leg, index) => (
                       <div key={index} className="bg-slate-50/50 border border-slate-200 rounded-xl p-4 grid md:grid-cols-4 gap-4 items-center">
                         <div className="md:col-span-2">
                           <div className="text-xs text-muted-foreground font-semibold uppercase mb-1">Sector {index + 1}</div>
                           <div className="flex items-center gap-2 text-base font-bold text-slate-900">
-                            <span>{leg.departure}</span>
-                            <ArrowRight className="w-4 h-4 text-muted-foreground" />
-                            <span>{leg.arrival}</span>
+                            <span>{leg.departure}</span><ArrowRight className="w-4 h-4 text-muted-foreground" /><span>{leg.arrival}</span>
                           </div>
                         </div>
                         <div className="space-y-1">
-                          <div className="text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1">
-                            <Plane className="w-3 h-3" /> Aircraft Specs
-                          </div>
-                          <div className="text-xs font-semibold text-slate-800 bg-slate-100 rounded px-2 py-0.5 w-fit">
-                            {leg.aircraft || "Unspecified Fleet"}
-                          </div>
+                          <div className="text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1"><Plane className="w-3 h-3" /> Aircraft Specs</div>
+                          <div className="text-xs font-semibold text-slate-800 bg-slate-100 rounded px-2 py-0.5 w-fit">{leg.aircraft || "Unspecified Fleet"}</div>
                           <div className="text-xs text-muted-foreground">Pax Count: {leg.passengers}</div>
                         </div>
                         <div className="space-y-0.5 text-xs text-slate-700">
-                          <div className="flex items-center gap-1.5">
-                            <Calendar className="w-3.5 h-3.5 text-muted-foreground" /> {leg.date}
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <Clock className="w-3.5 h-3.5 text-muted-foreground" /> {leg.time}
-                          </div>
+                          <div className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-muted-foreground" /> {leg.date}</div>
+                          <div className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-muted-foreground" /> {leg.time}</div>
                         </div>
                       </div>
                     ))}
                   </div>
-
-                  {/* Return Legs */}
-                  {selectedEnquiry.trip_type === "roundtrip" && selectedEnquiry.return_legs && (
+                  {selectedCharter.trip_type === "roundtrip" && selectedCharter.return_legs && (
                     <div className="space-y-3 mt-4">
-                      <h4 className="text-xs font-bold uppercase tracking-widest text-purple-600 flex items-center gap-2">
-                        <span className="h-2 w-2 rounded-full bg-purple-600 inline-block" />
-                        Inbound Return Journey Legs
-                      </h4>
-                      
-                      {parseLegs(selectedEnquiry.return_legs).map((leg, index) => (
+                      <h4 className="text-xs font-bold uppercase tracking-widest text-purple-600 flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-purple-600 inline-block" /> Inbound Return Journey Legs</h4>
+                      {parseLegs(selectedCharter.return_legs).map((leg, index) => (
                         <div key={index} className="bg-purple-50/20 border border-purple-100 rounded-xl p-4 grid md:grid-cols-4 gap-4 items-center">
                           <div className="md:col-span-2">
                             <div className="text-xs text-purple-500/70 font-semibold uppercase mb-1">Return Sector {index + 1}</div>
                             <div className="flex items-center gap-2 text-base font-bold text-slate-900">
-                              <span>{leg.departure}</span>
-                              <ArrowRight className="w-4 h-4 text-muted-foreground" />
-                              <span>{leg.arrival}</span>
+                              <span>{leg.departure}</span><ArrowRight className="w-4 h-4 text-muted-foreground" /><span>{leg.arrival}</span>
                             </div>
                           </div>
                           <div className="space-y-1">
-                            <div className="text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1">
-                              <Plane className="w-3 h-3" /> Aircraft Specs
-                            </div>
-                            <div className="text-xs font-semibold text-purple-800 bg-purple-50 border border-purple-100 rounded px-2 py-0.5 w-fit">
-                              {leg.aircraft || "Unspecified Fleet"}
-                            </div>
+                            <div className="text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1"><Plane className="w-3 h-3" /> Aircraft Specs</div>
+                            <div className="text-xs font-semibold text-purple-800 bg-purple-50 border border-purple-100 rounded px-2 py-0.5 w-fit">{leg.aircraft || "Unspecified Fleet"}</div>
                             <div className="text-xs text-muted-foreground">Pax Count: {leg.passengers}</div>
                           </div>
                           <div className="space-y-0.5 text-xs text-slate-700">
-                            <div className="flex items-center gap-1.5">
-                              <Calendar className="w-3.5 h-3.5 text-muted-foreground" /> {leg.date}
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <Clock className="w-3.5 h-3.5 text-muted-foreground" /> {leg.time}
-                            </div>
+                            <div className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-muted-foreground" /> {leg.date}</div>
+                            <div className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-muted-foreground" /> {leg.time}</div>
                           </div>
                         </div>
                       ))}
@@ -354,24 +490,163 @@ export default function EnquiriesPage() {
                   )}
                 </div>
 
-                {/* Message / Comments Box */}
                 <div className="space-y-2 border-t border-border pt-4">
-                  <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5">
-                    <MessageSquare className="w-3.5 h-3.5" /> Customer Remarks & Message
-                  </h3>
+                  <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" /> Initial Request Requirement</h3>
                   <div className="bg-muted/40 rounded-xl p-4 border border-border text-sm text-foreground leading-relaxed whitespace-pre-wrap">
-                    {selectedEnquiry.message || "No message or custom requirements provided by customer."}
+                    {selectedCharter.message || "No custom message variations provided."}
+                  </div>
+                </div>
+
+                {/* ================= LOCAL COMMUNICATION TRAILS HISTORY ================= */}
+                {selectedCharter.email_trails && selectedCharter.email_trails.length > 0 && (
+                  <div className="space-y-2 border-t border-border pt-4">
+                    <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5"><History className="w-3.5 h-3.5" /> Historical Communication Logs (Saved on Device)</h3>
+                    <div className="space-y-2.5 max-h-[200px] overflow-y-auto pr-1">
+                      {selectedCharter.email_trails.map((trail) => (
+                        <div key={trail.id} className="p-3 rounded-xl border text-xs leading-relaxed bg-blue-50/50 border-blue-100 ml-6">
+                          <div className="flex items-center justify-between mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                            <span>Management Response</span>
+                            <span>{new Date(trail.sent_at).toLocaleString()}</span>
+                          </div>
+                          <p className="whitespace-pre-wrap text-foreground">{trail.message}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2 border-t border-border pt-4 bg-slate-50/50 p-4 rounded-xl border">
+                  <h3 className="text-xs font-bold uppercase text-primary tracking-wider flex items-center gap-1.5"><Send className="w-3.5 h-3.5" /> Dispatch Reply via Browser SMTP</h3>
+                  <Textarea
+                    placeholder="Write your response message, custom quotes or operational notes..."
+                    value={replyMessage}
+                    onChange={(e) => setReplyMessage(e.target.value)}
+                    className="min-h-[100px] bg-white border-border focus-visible:ring-primary text-sm"
+                  />
+                  <div className="flex justify-end pt-1">
+                    <Button 
+                      size="sm" 
+                      onClick={() => handleSendEmail("charter", selectedCharter.enquiry_id, selectedCharter.email, `${selectedCharter.first_name} ${selectedCharter.last_name}`)}
+                      disabled={sendingEmail}
+                    >
+                      {sendingEmail ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> : <Send className="w-3.5 h-3.5 mr-2" />}
+                      Send Core Response Email
+                    </Button>
                   </div>
                 </div>
               </div>
-
               <div className="border-t border-border pt-4 flex justify-end">
-                <Button 
-                  onClick={() => setDetailModalOpen(false)} 
-                  className="bg-gradient-to-r from-primary to-accent text-primary-foreground shadow-sm"
-                >
-                  Close Inspection View
-                </Button>
+                <Button variant="outline" onClick={() => setCharterModalOpen(false)}>Close Inspection View</Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ================= MODAL: HELICOPTER INSPECTOR ================= */}
+      <Dialog open={heliModalOpen} onOpenChange={setHeliModalOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          {selectedHeli && (
+            <>
+              <DialogHeader className="border-b border-border pb-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="text-xs font-mono font-bold text-sky-600 block uppercase tracking-widest">Helicopter Inspector Panel</span>
+                    <DialogTitle className="text-2xl font-bold tracking-tight">Estimation {selectedHeli.enquiry_id}</DialogTitle>
+                  </div>
+                  <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider border ${getStatusBadgeClass(selectedHeli.status)}`}>
+                    {selectedHeli.status || "pending"}
+                  </span>
+                </div>
+              </DialogHeader>
+              <div className="space-y-6 pt-2">
+                <div className="grid sm:grid-cols-2 gap-4 bg-muted/30 border border-border p-4 rounded-xl">
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5"><User className="w-3.5 h-3.5" /> Customer Identity</h3>
+                    <p className="text-base font-semibold text-foreground">{selectedHeli.first_name} {selectedHeli.last_name}</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5"><Mail className="w-3.5 h-3.5" /> Contact Channels</h3>
+                    <div className="text-sm space-y-0.5">
+                      <p className="text-foreground"><span className="text-muted-foreground">Email:</span> {selectedHeli.email}</p>
+                      <p className="text-foreground"><span className="text-muted-foreground">Phone:</span> {selectedHeli.phone}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h3 className="text-sm font-bold text-sky-700 uppercase tracking-widest border-b border-border pb-2">Single-Sector Flight Plan</h3>
+                  <div className="bg-sky-50/30 border border-sky-100 rounded-xl p-5 grid md:grid-cols-3 gap-6 items-center">
+                    <div className="md:col-span-1 space-y-1">
+                      <div className="text-xs text-sky-600 font-bold uppercase tracking-wider">Flight Sector Route</div>
+                      <div className="flex flex-col gap-1 text-base font-bold text-slate-900">
+                        <span className="text-slate-500 text-xs font-normal">From:</span>
+                        <span className="bg-white px-2 py-1 rounded border border-slate-100 text-sm">{selectedHeli.from}</span>
+                        <span className="text-slate-500 text-xs font-normal mt-1">To:</span>
+                        <span className="bg-white px-2 py-1 rounded border border-slate-100 text-sm">{selectedHeli.to}</span>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1"><Helicopter className="w-3.5 h-3.5 text-sky-600" /> Operational Metrics</div>
+                      <div className="text-xs font-semibold text-sky-800 bg-sky-50 border border-sky-100 rounded px-2 py-1 w-fit">Helicopter Operational Fleet</div>
+                      <div className="text-sm font-medium text-slate-700 mt-1">Total Booked Passengers: <span className="font-bold text-slate-900">{selectedHeli.passengers}</span></div>
+                    </div>
+                    <div className="space-y-1 text-sm text-slate-700 font-medium">
+                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Schedule Timing</div>
+                      <div className="flex items-center gap-2 bg-white px-2.5 py-1 rounded border border-slate-100 text-xs text-slate-800"><Calendar className="w-3.5 h-3.5 text-slate-400" /> {selectedHeli.date_of_journey}</div>
+                      <div className="flex items-center gap-2 bg-white px-2.5 py-1 rounded border border-slate-100 text-xs text-slate-800 mt-1.5"><Clock className="w-3.5 h-3.5 text-slate-400" /> {selectedHeli.time_of_journey}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2 border-t border-border pt-4">
+                  <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" /> Customer Remarks & Message</h3>
+                  <div className="bg-muted/40 rounded-xl p-4 border border-border text-sm text-foreground leading-relaxed whitespace-pre-wrap">
+                    {selectedHeli.message || "No requirements variation notes passed on."}
+                  </div>
+                </div>
+
+                {/* ================= LOCAL COMMUNICATION TRAILS HISTORY ================= */}
+                {selectedHeli.email_trails && selectedHeli.email_trails.length > 0 && (
+                  <div className="space-y-2 border-t border-border pt-4">
+                    <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5"><History className="w-3.5 h-3.5" /> Historical Communication Logs (Saved on Device)</h3>
+                    <div className="space-y-2.5 max-h-[200px] overflow-y-auto pr-1">
+                      {selectedHeli.email_trails.map((trail) => (
+                        <div key={trail.id} className="p-3 rounded-xl border text-xs leading-relaxed bg-sky-50/50 border-sky-100 ml-6">
+                          <div className="flex items-center justify-between mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                            <span>Management Response</span>
+                            <span>{new Date(trail.sent_at).toLocaleString()}</span>
+                          </div>
+                          <p className="whitespace-pre-wrap text-foreground">{trail.message}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2 border-t border-border pt-4 bg-sky-50/10 p-4 rounded-xl border border-sky-100/50">
+                  <h3 className="text-xs font-bold uppercase text-sky-700 tracking-wider flex items-center gap-1.5"><Send className="w-3.5 h-3.5" /> Dispatch Reply via Browser SMTP</h3>
+                  <Textarea
+                    placeholder="Write your helicopter estimations layout feedback details here..."
+                    value={replyMessage}
+                    onChange={(e) => setReplyMessage(e.target.value)}
+                    className="min-h-[100px] bg-white border-sky-100 focus-visible:ring-sky-600 text-sm"
+                  />
+                  <div className="flex justify-end pt-1">
+                    <Button 
+                      size="sm" 
+                      onClick={() => handleSendEmail("helicopter", selectedHeli.enquiry_id, selectedHeli.email, `${selectedHeli.first_name} ${selectedHeli.last_name}`)}
+                      disabled={sendingEmail}
+                      className="bg-gradient-to-r from-sky-700 to-blue-800 hover:from-sky-800 hover:to-blue-900 text-white shadow-sm"
+                    >
+                      {sendingEmail ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> : <Send className="w-3.5 h-3.5 mr-2" />}
+                      Send Core Response Email
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              <div className="border-t border-border pt-4 flex justify-end">
+                <Button variant="outline" onClick={() => setHeliModalOpen(false)}>Close Inspection View</Button>
               </div>
             </>
           )}
