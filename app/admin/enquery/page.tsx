@@ -5,8 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/page-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
-import emailjs from "@emailjs/browser"; // Direct Frontend Email Client
 import { 
   Loader2, 
   Eye, 
@@ -19,9 +17,7 @@ import {
   Phone, 
   MessageSquare,
   ArrowRight,
-  Helicopter,
-  Send,
-  History
+  Helicopter
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -31,14 +27,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-// API Endpoints for raw enquiry data
+// API Endpoints
 const CHARTER_API_URL = "https://aviation.braventra.in/api/enquiries";
 const HELI_API_URL = "https://aviation.braventra.in/api/helicopter-enquiries";
-
-// Replace these with your actual keys from your EmailJS Account Dashboard
-const EMAILJS_SERVICE_ID = "YOUR_EMAILJS_SERVICE_ID";
-const EMAILJS_TEMPLATE_ID = "YOUR_EMAILJS_TEMPLATE_ID";
-const EMAILJS_PUBLIC_KEY = "YOUR_EMAILJS_PUBLIC_KEY";
 
 interface FlightLeg {
   leg_number: number;
@@ -48,13 +39,6 @@ interface FlightLeg {
   date: string;
   time: string;
   aircraft: string;
-}
-
-interface EmailTrail {
-  id: string | number;
-  sender: "admin" | "customer";
-  message: string;
-  sent_at: string;
 }
 
 interface CharterEnquiry {
@@ -70,7 +54,6 @@ interface CharterEnquiry {
   message: string | null;
   status: "pending" | "contacted" | "confirmed" | "cancelled";
   created_at: string;
-  email_trails?: EmailTrail[]; 
 }
 
 interface HelicopterEnquiry {
@@ -88,7 +71,6 @@ interface HelicopterEnquiry {
   message: string | null;
   status: "pending" | "contacted" | "confirmed" | "cancelled";
   created_at: string;
-  email_trails?: EmailTrail[];
 }
 
 export default function EnquiriesPage() {
@@ -103,36 +85,17 @@ export default function EnquiriesPage() {
   const [charterModalOpen, setCharterModalOpen] = useState(false);
   const [heliModalOpen, setHeliModalOpen] = useState(false);
 
-  // Email Administration Form States
-  const [replyMessage, setReplyMessage] = useState("");
-  const [sendingEmail, setSendingEmail] = useState(false);
-
   useEffect(() => {
     fetchCharterEnquiries();
     fetchHeliEnquiries();
   }, []);
-
-  // Helper: Injects saved local storage email logs into backend-fetched lists
-  const mergeLocalTrails = (fetchedData: any[], type: "charter" | "helicopter") => {
-    return fetchedData.map((item) => {
-      const storageKey = `email_trail_${type}_${item.enquiry_id}`;
-      const savedTrails = localStorage.getItem(storageKey);
-      return {
-        ...item,
-        email_trails: savedTrails ? JSON.parse(savedTrails) : [],
-        // Dynamically visually change status if an admin response exists locally
-        status: savedTrails && JSON.parse(savedTrails).length > 0 ? "contacted" : item.status
-      };
-    });
-  };
 
   const fetchCharterEnquiries = async () => {
     setLoadingCharter(true);
     try {
       const res = await fetch(CHARTER_API_URL);
       const json = await res.json();
-      const baseData = Array.isArray(json) ? json : [];
-      setCharterEnquiries(mergeLocalTrails(baseData, "charter"));
+      setCharterEnquiries(Array.isArray(json) ? json : []);
     } catch (err) {
       console.error("Fetch charter error:", err);
       toast.error("Failed to load charter enquiries");
@@ -146,8 +109,7 @@ export default function EnquiriesPage() {
     try {
       const res = await fetch(HELI_API_URL);
       const json = await res.json();
-      const baseData = Array.isArray(json) ? json : [];
-      setHeliEnquiries(mergeLocalTrails(baseData, "helicopter"));
+      setHeliEnquiries(Array.isArray(json) ? json : []);
     } catch (err) {
       console.error("Fetch helicopter error:", err);
       toast.error("Failed to load helicopter enquiries");
@@ -162,7 +124,6 @@ export default function EnquiriesPage() {
     try {
       const response = await fetch(`${CHARTER_API_URL}/${id}`, { method: "DELETE" });
       if (!response.ok) throw new Error("Delete failed");
-      localStorage.removeItem(`email_trail_charter_${id}`); // Clean local logs
       toast.success("Charter enquiry deleted successfully");
       fetchCharterEnquiries();
     } catch (error) {
@@ -176,72 +137,10 @@ export default function EnquiriesPage() {
     try {
       const response = await fetch(`${HELI_API_URL}/${id}`, { method: "DELETE" });
       if (!response.ok) throw new Error("Delete failed");
-      localStorage.removeItem(`email_trail_helicopter_${id}`); // Clean local logs
       toast.success("Helicopter enquiry deleted successfully");
       fetchHeliEnquiries();
     } catch (error) {
       toast.error("Delete sequence failed");
-    }
-  };
-
-  // 100% Pure Frontend Email Transmit & History Storage Sequence
-  const handleSendEmail = async (type: "charter" | "helicopter", enquiryId: string, recipientEmail: string, customerName: string) => {
-    if (!replyMessage.trim()) {
-      toast.error("Please enter a reply message before transmitting.");
-      return;
-    }
-
-    setSendingEmail(true);
-
-    // Dynamic key parameters mapped directly to your EmailJS Template structure
-    const templateParams = {
-      to_email: recipientEmail,
-      customer_name: customerName,
-      enquiry_id: enquiryId,
-      reply_message: replyMessage,
-    };
-
-    try {
-      // Direct client side delivery line through SMTP configuration rules
-      await emailjs.send(
-        EMAILJS_SERVICE_ID,
-        EMAILJS_TEMPLATE_ID,
-        templateParams,
-        EMAILJS_PUBLIC_KEY
-      );
-
-      // Save tracking trail securely directly into the LocalStorage space
-      const storageKey = `email_trail_${type}_${enquiryId}`;
-      const existingLogsRaw = localStorage.getItem(storageKey);
-      const existingLogs: EmailTrail[] = existingLogsRaw ? JSON.parse(existingLogsRaw) : [];
-      
-      const newLog: EmailTrail = {
-        id: Date.now(),
-        sender: "admin",
-        message: replyMessage,
-        sent_at: new Date().toISOString()
-      };
-
-      const updatedLogs = [...existingLogs, newLog];
-      localStorage.setItem(storageKey, JSON.stringify(updatedLogs));
-
-      toast.success(`Reply email safely dispatched directly to ${recipientEmail}`);
-      setReplyMessage("");
-
-      // Re-map localized list updates immediately for seamless UI feel
-      if (type === "charter") {
-        setCharterEnquiries(prev => prev.map(e => e.enquiry_id === enquiryId ? { ...e, status: "contacted", email_trails: updatedLogs } : e));
-        if (selectedCharter) setSelectedCharter({ ...selectedCharter, status: "contacted", email_trails: updatedLogs });
-      } else {
-        setHeliEnquiries(prev => prev.map(e => e.enquiry_id === enquiryId ? { ...e, status: "contacted", email_trails: updatedLogs } : e));
-        if (selectedHeli) setSelectedHeli({ ...selectedHeli, status: "contacted", email_trails: updatedLogs });
-      }
-
-    } catch (error) {
-      console.error("EmailJS execution breakdown:", error);
-      toast.error("Failed to direct-transmit. Check EmailJS variables configuration keys.");
-    } finally {
-      setSendingEmail(false);
     }
   };
 
@@ -268,14 +167,14 @@ export default function EnquiriesPage() {
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <PageHeader
-        title=" Enquiries Desk"
+        title="Enquiries Desk"
         description="View and manage inbound flight reservations across your standard business jets and helicopter operators fleets."
       />
 
       <Tabs defaultValue="charter" className="w-full">
         <TabsList className="grid grid-cols-2 max-w-md mb-4 bg-muted">
           <TabsTrigger value="charter" className="flex items-center gap-2">
-            <Plane className="w-4 h-4" />  Charters Enquries
+            <Plane className="w-4 h-4" /> Charter Enquiries
           </TabsTrigger>
           <TabsTrigger value="helicopter" className="flex items-center gap-2">
             <Helicopter className="w-4 h-4" /> Helicopter Enquries
@@ -309,7 +208,7 @@ export default function EnquiriesPage() {
                         <tr><td colSpan={6} className="text-center p-8 text-muted-foreground">No customer jet enquiries have been logged yet.</td></tr>
                       ) : (
                         charterEnquiries.map((enquiry) => (
-                          <tr key={enquiry.id} className="hover:bg-muted/40 transition-colors cursor-pointer group" onClick={() => { setSelectedCharter(enquiry); setReplyMessage(""); setCharterModalOpen(true); }}>
+                          <tr key={enquiry.id} className="hover:bg-muted/40 transition-colors cursor-pointer group" onClick={() => { setSelectedCharter(enquiry); setCharterModalOpen(true); }}>
                             <td className="p-4 font-mono text-xs font-semibold text-primary">{enquiry.enquiry_id}</td>
                             <td className="p-4">
                               <div className="font-medium text-foreground">{enquiry.first_name} {enquiry.last_name}</div>
@@ -328,7 +227,7 @@ export default function EnquiriesPage() {
                             <td className="p-4 text-muted-foreground text-xs">{new Date(enquiry.created_at).toLocaleDateString(undefined, { dateStyle: "medium" })}</td>
                             <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center justify-end gap-2">
-                                <Button variant="ghost" size="icon" onClick={() => { setSelectedCharter(enquiry); setReplyMessage(""); setCharterModalOpen(true); }} className="h-8 w-8 text-muted-foreground hover:text-primary"><Eye className="h-4 w-4" /></Button>
+                                <Button variant="ghost" size="icon" onClick={() => { setSelectedCharter(enquiry); setCharterModalOpen(true); }} className="h-8 w-8 text-muted-foreground hover:text-primary"><Eye className="h-4 w-4" /></Button>
                                 <Button variant="ghost" size="icon" onClick={(e) => onDeleteCharter(enquiry.enquiry_id, e)} className="h-8 w-8 text-destructive hover:bg-destructive/10"><Trash2 className="h-4 w-4" /></Button>
                               </div>
                             </td>
@@ -371,7 +270,7 @@ export default function EnquiriesPage() {
                         <tr><td colSpan={7} className="text-center p-8 text-muted-foreground">No helicopter estimations requests found.</td></tr>
                       ) : (
                         heliEnquiries.map((enquiry) => (
-                          <tr key={enquiry.id} className="hover:bg-muted/40 transition-colors cursor-pointer group" onClick={() => { setSelectedHeli(enquiry); setReplyMessage(""); setHeliModalOpen(true); }}>
+                          <tr key={enquiry.id} className="hover:bg-muted/40 transition-colors cursor-pointer group" onClick={() => { setSelectedHeli(enquiry); setHeliModalOpen(true); }}>
                             <td className="p-4 font-mono text-xs font-semibold text-sky-700">{enquiry.enquiry_id}</td>
                             <td className="p-4">
                               <div className="font-medium text-foreground">{enquiry.first_name} {enquiry.last_name}</div>
@@ -393,7 +292,7 @@ export default function EnquiriesPage() {
                             <td className="p-4 text-muted-foreground text-xs">{new Date(enquiry.created_at).toLocaleDateString(undefined, { dateStyle: "medium" })}</td>
                             <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center justify-end gap-2">
-                                <Button variant="ghost" size="icon" onClick={() => { setSelectedHeli(enquiry); setReplyMessage(""); setHeliModalOpen(true); }} className="h-8 w-8 text-muted-foreground hover:text-primary"><Eye className="h-4 w-4" /></Button>
+                                <Button variant="ghost" size="icon" onClick={() => { setSelectedHeli(enquiry); setHeliModalOpen(true); }} className="h-8 w-8 text-muted-foreground hover:text-primary"><Eye className="h-4 w-4" /></Button>
                                 <Button variant="ghost" size="icon" onClick={(e) => onDeleteHeli(enquiry.enquiry_id, e)} className="h-8 w-8 text-destructive hover:bg-destructive/10"><Trash2 className="h-4 w-4" /></Button>
                               </div>
                             </td>
@@ -439,7 +338,6 @@ export default function EnquiriesPage() {
                     </div>
                   </div>
                 </div>
-                
                 <div className="space-y-4">
                   <h3 className="text-sm font-bold text-primary uppercase tracking-widest border-b border-border pb-2">Flight Itinerary Details</h3>
                   <div className="space-y-3">
@@ -489,54 +387,15 @@ export default function EnquiriesPage() {
                     </div>
                   )}
                 </div>
-
                 <div className="space-y-2 border-t border-border pt-4">
-                  <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" /> Initial Request Requirement</h3>
+                  <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" /> Customer Remarks</h3>
                   <div className="bg-muted/40 rounded-xl p-4 border border-border text-sm text-foreground leading-relaxed whitespace-pre-wrap">
                     {selectedCharter.message || "No custom message variations provided."}
                   </div>
                 </div>
-
-                {/* ================= LOCAL COMMUNICATION TRAILS HISTORY ================= */}
-                {selectedCharter.email_trails && selectedCharter.email_trails.length > 0 && (
-                  <div className="space-y-2 border-t border-border pt-4">
-                    <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5"><History className="w-3.5 h-3.5" /> Historical Communication Logs (Saved on Device)</h3>
-                    <div className="space-y-2.5 max-h-[200px] overflow-y-auto pr-1">
-                      {selectedCharter.email_trails.map((trail) => (
-                        <div key={trail.id} className="p-3 rounded-xl border text-xs leading-relaxed bg-blue-50/50 border-blue-100 ml-6">
-                          <div className="flex items-center justify-between mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                            <span>Management Response</span>
-                            <span>{new Date(trail.sent_at).toLocaleString()}</span>
-                          </div>
-                          <p className="whitespace-pre-wrap text-foreground">{trail.message}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-2 border-t border-border pt-4 bg-slate-50/50 p-4 rounded-xl border">
-                  <h3 className="text-xs font-bold uppercase text-primary tracking-wider flex items-center gap-1.5"><Send className="w-3.5 h-3.5" /> Dispatch Reply via Browser SMTP</h3>
-                  <Textarea
-                    placeholder="Write your response message, custom quotes or operational notes..."
-                    value={replyMessage}
-                    onChange={(e) => setReplyMessage(e.target.value)}
-                    className="min-h-[100px] bg-white border-border focus-visible:ring-primary text-sm"
-                  />
-                  <div className="flex justify-end pt-1">
-                    <Button 
-                      size="sm" 
-                      onClick={() => handleSendEmail("charter", selectedCharter.enquiry_id, selectedCharter.email, `${selectedCharter.first_name} ${selectedCharter.last_name}`)}
-                      disabled={sendingEmail}
-                    >
-                      {sendingEmail ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> : <Send className="w-3.5 h-3.5 mr-2" />}
-                      Send Core Response Email
-                    </Button>
-                  </div>
-                </div>
               </div>
               <div className="border-t border-border pt-4 flex justify-end">
-                <Button variant="outline" onClick={() => setCharterModalOpen(false)}>Close Inspection View</Button>
+                <Button onClick={() => setCharterModalOpen(false)}>Close Inspection View</Button>
               </div>
             </>
           )}
@@ -605,48 +464,11 @@ export default function EnquiriesPage() {
                     {selectedHeli.message || "No requirements variation notes passed on."}
                   </div>
                 </div>
-
-                {/* ================= LOCAL COMMUNICATION TRAILS HISTORY ================= */}
-                {selectedHeli.email_trails && selectedHeli.email_trails.length > 0 && (
-                  <div className="space-y-2 border-t border-border pt-4">
-                    <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5"><History className="w-3.5 h-3.5" /> Historical Communication Logs (Saved on Device)</h3>
-                    <div className="space-y-2.5 max-h-[200px] overflow-y-auto pr-1">
-                      {selectedHeli.email_trails.map((trail) => (
-                        <div key={trail.id} className="p-3 rounded-xl border text-xs leading-relaxed bg-sky-50/50 border-sky-100 ml-6">
-                          <div className="flex items-center justify-between mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                            <span>Management Response</span>
-                            <span>{new Date(trail.sent_at).toLocaleString()}</span>
-                          </div>
-                          <p className="whitespace-pre-wrap text-foreground">{trail.message}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-2 border-t border-border pt-4 bg-sky-50/10 p-4 rounded-xl border border-sky-100/50">
-                  <h3 className="text-xs font-bold uppercase text-sky-700 tracking-wider flex items-center gap-1.5"><Send className="w-3.5 h-3.5" /> Dispatch Reply via Browser SMTP</h3>
-                  <Textarea
-                    placeholder="Write your helicopter estimations layout feedback details here..."
-                    value={replyMessage}
-                    onChange={(e) => setReplyMessage(e.target.value)}
-                    className="min-h-[100px] bg-white border-sky-100 focus-visible:ring-sky-600 text-sm"
-                  />
-                  <div className="flex justify-end pt-1">
-                    <Button 
-                      size="sm" 
-                      onClick={() => handleSendEmail("helicopter", selectedHeli.enquiry_id, selectedHeli.email, `${selectedHeli.first_name} ${selectedHeli.last_name}`)}
-                      disabled={sendingEmail}
-                      className="bg-gradient-to-r from-sky-700 to-blue-800 hover:from-sky-800 hover:to-blue-900 text-white shadow-sm"
-                    >
-                      {sendingEmail ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> : <Send className="w-3.5 h-3.5 mr-2" />}
-                      Send Core Response Email
-                    </Button>
-                  </div>
-                </div>
               </div>
               <div className="border-t border-border pt-4 flex justify-end">
-                <Button variant="outline" onClick={() => setHeliModalOpen(false)}>Close Inspection View</Button>
+                <Button onClick={() => setHeliModalOpen(false)} className="bg-gradient-to-r from-sky-700 to-blue-800 hover:from-sky-800 hover:to-blue-900 text-white shadow-sm">
+                  Close Inspection View
+                </Button>
               </div>
             </>
           )}
