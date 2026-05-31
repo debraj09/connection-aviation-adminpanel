@@ -19,6 +19,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 const navItems = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/hero", label: "Hero Section", icon: Image },
+  { href: "/admin/newspage", label: "Updates", icon: Image },
   { href: "/admin/about", label: "About Us", icon: Info },
   { href: "/admin/services", label: "Services", icon: Plane },
   { href: "/admin/faqs", label: "FAQs", icon: HelpCircle },
