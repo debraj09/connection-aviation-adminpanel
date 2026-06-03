@@ -6,9 +6,12 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { PageHeader } from "@/components/page-header";
-import { Plus, Edit3, Trash2, Loader2, X, RefreshCw, Search, EyeOff, UploadCloud } from "lucide-react";
+import { Plus, Edit3, Trash2, Loader2, X, RefreshCw, Search, EyeOff, UploadCloud, Bold, Italic, Strikethrough, List, ListOrdered, Heading2 } from "lucide-react";
 import { toast } from "sonner";
+
+// TipTap Rich Text Editor Core Modules
+import { useEditor, EditorContent } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
 
 interface BlogPost {
   id?: number;
@@ -23,6 +26,68 @@ interface BlogPost {
 }
 
 const API_URL = "https://aviation.braventra.in/api/blogs";
+
+// TipTap Dynamic Toolbar Component
+const EditorToolbar = ({ editor }: { editor: any }) => {
+  if (!editor) return null;
+
+  return (
+    <div className="bg-gray-50 border-b border-gray-200 px-3 py-1.5 flex flex-wrap gap-1 text-gray-500 text-xs font-mono select-none items-center">
+      <button
+        type="button"
+        onClick={() => editor.chain().focus().toggleBold().run()}
+        className={`p-1.5 rounded transition-colors ${editor.isActive("bold") ? "bg-gray-200 text-gray-900 font-bold" : "hover:bg-gray-200/70"}`}
+        title="Bold"
+      >
+        <Bold className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={() => editor.chain().focus().toggleItalic().run()}
+        className={`p-1.5 rounded transition-colors ${editor.isActive("italic") ? "bg-gray-200 text-gray-900" : "hover:bg-gray-200/70"}`}
+        title="Italic"
+      >
+        <Italic className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={() => editor.chain().focus().toggleStrike().run()}
+        className={`p-1.5 rounded transition-colors ${editor.isActive("strike") ? "bg-gray-200 text-gray-900" : "hover:bg-gray-200/70"}`}
+        title="Strikethrough"
+      >
+        <Strikethrough className="h-3.5 w-3.5" />
+      </button>
+
+      <div className="w-px h-4 bg-gray-200 mx-1" />
+
+      <button
+        type="button"
+        onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+        className={`p-1.5 rounded transition-colors ${editor.isActive("heading", { level: 2 }) ? "bg-gray-200 text-gray-900" : "hover:bg-gray-200/70"}`}
+        title="Heading 2"
+      >
+        <Heading2 className="h-3.5 w-3.5" />
+      </button>
+
+      <button
+        type="button"
+        onClick={() => editor.chain().focus().toggleBulletList().run()}
+        className={`p-1.5 rounded transition-colors ${editor.isActive("bulletList") ? "bg-gray-200 text-gray-900" : "hover:bg-gray-200/70"}`}
+        title="Bullet List"
+      >
+        <List className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={() => editor.chain().focus().toggleOrderedList().run()}
+        className={`p-1.5 rounded transition-colors ${editor.isActive("orderedList") ? "bg-gray-200 text-gray-900" : "hover:bg-gray-200/70"}`}
+        title="Numbered List"
+      >
+        <ListOrdered className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+};
 
 export default function BlogPage() {
   const [blogs, setBlogs] = useState<BlogPost[]>([]);
@@ -41,6 +106,27 @@ export default function BlogPage() {
     publish_status: "Draft",
     tags: "",
   });
+
+  // Setup rich text editor platform module
+  const editor = useEditor({
+    extensions: [StarterKit],
+    content: formData.full_content,
+    onUpdate: ({ editor }) => {
+      setFormData((prev) => ({ ...prev, full_content: editor.getHTML() }));
+    },
+    editorProps: {
+      attributes: {
+        class: "prose prose-sm max-w-none focus:outline-none min-h-[220px] p-3 text-sm overflow-y-auto",
+      },
+    },
+  });
+
+  // Keep TipTap content synchronized smoothly when form data context changes externally
+  useEffect(() => {
+    if (editor && editor.getHTML() !== formData.full_content) {
+      editor.commands.setContent(formData.full_content || "<p></p>");
+    }
+  }, [formData.full_content, editor]);
 
   useEffect(() => {
     fetchBlogs();
@@ -75,7 +161,6 @@ export default function BlogPage() {
 
   const openEditModal = (blog: BlogPost) => {
     setSelectedFile(null);
-    // Format date string correctly to populate standard input type text/date safely
     const formattedDate = blog.publish_date ? blog.publish_date.split("T")[0] : "";
     setFormData({ ...blog, publish_date: formattedDate });
     setModalOpen(true);
@@ -84,6 +169,12 @@ export default function BlogPage() {
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const isEditing = !!formData.id;
+
+    // Direct content extraction verification step before serialization
+    if (!formData.full_content || formData.full_content === "<p></p>") {
+      toast.error("Full content field cannot be blank.");
+      return;
+    }
 
     const dataPayload = new FormData();
     dataPayload.append("title", formData.title);
@@ -279,21 +370,14 @@ export default function BlogPage() {
                 />
               </div>
 
-              {/* Textarea configuration matching core editor content height parameters safely */}
+              {/* UPGRADED: Fully Operational Rich Text Editor Section */}
               <div className="space-y-1.5">
                 <Label className="font-semibold text-gray-700 text-xs">Full Content <span className="text-red-500">*</span></Label>
-                <div className="border border-gray-200 rounded-md overflow-hidden focus-within:border-gray-400 transition-colors">
-                  <div className="bg-gray-50 border-b border-gray-200 px-3 py-1.5 flex flex-wrap gap-4 text-gray-400 text-xs font-mono select-none">
-                    <span>B</span><span>I</span><span>U</span><span>⁝ List</span><span>Link</span><span>Image</span>
+                <div className="border border-gray-200 rounded-md overflow-hidden focus-within:border-gray-400 focus-within:ring-1 focus-within:ring-gray-400 transition-all bg-white">
+                  <EditorToolbar editor={editor} />
+                  <div className="[&_.tiptap]:outline-none [&_.tiptap_ul]:list-disc [&_.tiptap_ol]:list-decimal [&_.tiptap_ul]:pl-5 [&_.tiptap_ol]:pl-5">
+                    <EditorContent editor={editor} />
                   </div>
-                  <Textarea
-                    rows={8}
-                    value={formData.full_content}
-                    onChange={(e) => setFormData({ ...formData, full_content: e.target.value })}
-                    placeholder="Write your blog post content here..."
-                    className="border-0 focus-visible:ring-0 rounded-none border-t-0 p-3 w-full"
-                    required
-                  />
                 </div>
               </div>
 
@@ -343,7 +427,6 @@ export default function BlogPage() {
                 <p className="text-[11px] text-gray-400 px-0.5">Separate tags with commas</p>
               </div>
 
-              {/* File Attachment Drag Drop Wrapper view layout schema box from screenshot */}
               <div className="space-y-1.5">
                 <Label className="font-semibold text-gray-700 text-xs">Banner Image <span className="text-red-500">*</span></Label>
                 <div 
