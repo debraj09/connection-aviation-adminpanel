@@ -370,7 +370,7 @@ export default function BlogPage() {
                 />
               </div>
 
-              {/* UPGRADED: Fully Operational Rich Text Editor Section */}
+              {/* UPGRADED: Fully Operational Rich Text Editor  */}
               <div className="space-y-1.5">
                 <Label className="font-semibold text-gray-700 text-xs">Full Content <span className="text-red-500">*</span></Label>
                 <div className="border border-gray-200 rounded-md overflow-hidden focus-within:border-gray-400 focus-within:ring-1 focus-within:ring-gray-400 transition-all bg-white">
