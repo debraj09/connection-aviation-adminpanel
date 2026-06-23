@@ -8,7 +8,10 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/page-header";
-import { Plus, Pencil, Trash2, Save, X, Loader2, Upload } from "lucide-react";
+import { 
+  Plus, Pencil, Trash2, Save, X, Loader2, Upload, 
+  ChevronDown, ChevronUp, GripVertical 
+} from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -16,6 +19,12 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { toast } from "sonner";
 
 interface Service {
@@ -27,7 +36,16 @@ interface Service {
   image_path: string;
 }
 
+interface ServiceFaq {
+  id?: number;
+  service_id: number;
+  question: string;
+  answer: string;
+  display_order: number;
+}
+
 const API_URL = "https://aviation.braventra.in/api/services";
+const FAQ_API_URL = "https://aviation.braventra.in/api/service-faqs";
 const IMAGE_BASE = "https://aviation.braventra.in";
 
 export default function ServicesPage() {
@@ -37,6 +55,14 @@ export default function ServicesPage() {
   const [open, setOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // FAQ states
+  const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null);
+  const [faqs, setFaqs] = useState<ServiceFaq[]>([]);
+  const [faqLoading, setFaqLoading] = useState(false);
+  const [editingFaq, setEditingFaq] = useState<ServiceFaq | null>(null);
+  const [faqOpen, setFaqOpen] = useState(false);
+  const [expandedServices, setExpandedServices] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     fetchServices();
@@ -57,6 +83,31 @@ export default function ServicesPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const fetchFaqs = async (serviceId: number) => {
+    setFaqLoading(true);
+    try {
+      const res = await fetch(`${FAQ_API_URL}/service/${serviceId}`);
+      const data = await res.json();
+      setFaqs(data);
+    } catch (err) {
+      toast.error("Failed to load FAQs");
+    } finally {
+      setFaqLoading(false);
+    }
+  };
+
+  const toggleServiceExpand = (serviceId: number) => {
+    const newExpanded = new Set(expandedServices);
+    if (newExpanded.has(serviceId)) {
+      newExpanded.delete(serviceId);
+    } else {
+      newExpanded.add(serviceId);
+      setSelectedServiceId(serviceId);
+      fetchFaqs(serviceId);
+    }
+    setExpandedServices(newExpanded);
   };
 
   const openNew = () => {
@@ -123,6 +174,63 @@ export default function ServicesPage() {
     }
   };
 
+  // FAQ Handlers
+  const openNewFaq = (serviceId: number) => {
+    setEditingFaq({ 
+      service_id: serviceId, 
+      question: "", 
+      answer: "", 
+      display_order: faqs.length + 1 
+    });
+    setFaqOpen(true);
+  };
+
+  const openEditFaq = (faq: ServiceFaq) => {
+    setEditingFaq({ ...faq });
+    setFaqOpen(true);
+  };
+
+  const handleSaveFaq = async () => {
+    if (!editingFaq) return;
+
+    const method = editingFaq.id ? "PUT" : "POST";
+    const url = editingFaq.id 
+      ? `${FAQ_API_URL}/${editingFaq.id}` 
+      : FAQ_API_URL;
+
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editingFaq),
+      });
+
+      if (!res.ok) throw new Error();
+
+      toast.success(editingFaq.id ? "FAQ updated" : "FAQ added");
+      setFaqOpen(false);
+      if (selectedServiceId) {
+        fetchFaqs(selectedServiceId);
+      }
+    } catch (err) {
+      toast.error("Failed to save FAQ");
+    }
+  };
+
+  const removeFaq = async (id: number) => {
+    if (!confirm("Are you sure you want to delete this FAQ?")) return;
+    try {
+      const res = await fetch(`${FAQ_API_URL}/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      toast.success("FAQ deleted");
+      if (selectedServiceId) {
+        fetchFaqs(selectedServiceId);
+      }
+    } catch (err) {
+      toast.error("Delete failed");
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -146,65 +254,157 @@ export default function ServicesPage() {
         }
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="space-y-4">
         {services.map((s) => (
           <Card
             key={s.id}
             className="overflow-hidden hover:shadow-lg transition-all border-border/50"
           >
             <CardContent className="p-0">
-              <div className="flex h-full">
-                <div className="w-1/3 h-40 shrink-0 bg-muted">
-                  {s.image_path ? (
-                    <img
-                      src={`${IMAGE_BASE}${s.image_path}`}
-                      alt={s.title}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                      No Image
+              <div className="flex h-full flex-col">
+                {/* Service Header */}
+                <div className="flex items-stretch">
+                  <div className="w-1/4 h-48 shrink-0 bg-muted">
+                    {s.image_path ? (
+                      <img
+                        src={`${IMAGE_BASE}${s.image_path}`}
+                        alt={s.title}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                        No Image
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 p-5 flex flex-col justify-between min-w-0">
+                    <div>
+                      <Badge
+                        variant="outline"
+                        className="mb-2 font-mono text-[10px]"
+                      >
+                        {s.slug}
+                      </Badge>
+                      <h3 className="font-bold text-lg truncate">{s.title}</h3>
+                      <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
+                        {s.shortDesc}
+                      </p>
                     </div>
-                  )}
-                </div>
-                <div className="flex-1 p-5 flex flex-col justify-between min-w-0">
-                  <div>
-                    <Badge
-                      variant="outline"
-                      className="mb-2 font-mono text-[10px]"
-                    >
-                      {s.slug}
-                    </Badge>
-                    <h3 className="font-bold text-lg truncate">{s.title}</h3>
-                    <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
-                      {s.shortDesc}
-                    </p>
+                    <div className="flex gap-2 mt-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8"
+                        onClick={() => openEdit(s)}
+                      >
+                        <Pencil className="h-3 w-3 mr-2" /> Edit
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-destructive hover:bg-destructive/10"
+                        onClick={() => s.id && remove(s.id)}
+                      >
+                        <Trash2 className="h-3 w-3 mr-2" /> Delete
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 ml-auto"
+                        onClick={() => s.id && toggleServiceExpand(s.id)}
+                      >
+                        {s.id && expandedServices.has(s.id) ? (
+                          <>
+                            <ChevronUp className="h-3 w-3 mr-2" /> Hide FAQs
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="h-3 w-3 mr-2" /> Show FAQs
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex gap-2 mt-4">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8"
-                      onClick={() => openEdit(s)}
-                    >
-                      <Pencil className="h-3 w-3 mr-2" /> Edit
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 text-destructive hover:bg-destructive/10"
-                      onClick={() => s.id && remove(s.id)}
-                    >
-                      <Trash2 className="h-3 w-3 mr-2" /> Delete
-                    </Button>
-                  </div>
                 </div>
+
+                {/* FAQ Section */}
+                {s.id && expandedServices.has(s.id) && (
+                  <div className="border-t border-border/50 p-5 bg-muted/20">
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="font-semibold text-sm">
+                        Frequently Asked Questions
+                      </h4>
+                      <Button
+                        size="sm"
+                        onClick={() => s.id && openNewFaq(s.id)}
+                        className="bg-gradient-to-r from-primary to-accent text-primary-foreground hover:opacity-90"
+                      >
+                        <Plus className="h-3 w-3 mr-2" /> Add FAQ
+                      </Button>
+                    </div>
+
+                    {faqLoading ? (
+                      <div className="flex justify-center py-4">
+                        <Loader2 className="animate-spin text-primary h-6 w-6" />
+                      </div>
+                    ) : faqs.length === 0 ? (
+                      <div className="text-center py-6 text-muted-foreground text-sm border-2 border-dashed rounded-lg">
+                        No FAQs added for this service yet.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {faqs.map((faq) => (
+                          <div
+                            key={faq.id}
+                            className="bg-background rounded-lg p-4 border border-border/50 hover:shadow-md transition-shadow"
+                          >
+                            <div className="flex items-start gap-4">
+                              <div className="flex flex-col items-center pt-1 text-muted-foreground/60">
+                                <GripVertical className="h-4 w-4" />
+                                <span className="text-[10px] font-bold mt-1 uppercase">
+                                  {faq.display_order}
+                                </span>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <h5 className="font-medium text-foreground text-sm">
+                                  {faq.question}
+                                </h5>
+                                <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+                                  {faq.answer}
+                                </p>
+                              </div>
+                              <div className="flex gap-1 shrink-0">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => openEditFaq(faq)}
+                                  className="h-8 w-8"
+                                >
+                                  <Pencil className="h-3 w-3" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => faq.id && removeFaq(faq.id)}
+                                  className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
         ))}
       </div>
 
+      {/* Service Edit/Create Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -305,6 +505,70 @@ export default function ServicesPage() {
               className="bg-gradient-to-r from-primary to-accent text-primary-foreground hover:opacity-90"
             >
               <Save className="h-4 w-4 mr-2" /> Save Service
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* FAQ Edit/Create Dialog */}
+      <Dialog open={faqOpen} onOpenChange={setFaqOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>
+              {editingFaq?.id ? "Edit FAQ" : "Add FAQ for Service"}
+            </DialogTitle>
+          </DialogHeader>
+          {editingFaq && (
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Question</Label>
+                <Input
+                  value={editingFaq.question}
+                  onChange={(e) =>
+                    setEditingFaq({ ...editingFaq, question: e.target.value })
+                  }
+                  placeholder="e.g., How quickly can a jet be arranged?"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Answer</Label>
+                <Textarea
+                  rows={5}
+                  value={editingFaq.answer}
+                  onChange={(e) =>
+                    setEditingFaq({ ...editingFaq, answer: e.target.value })
+                  }
+                  placeholder="Detailed answer here..."
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Display Order</Label>
+                <Input
+                  type="number"
+                  value={editingFaq.display_order}
+                  onChange={(e) =>
+                    setEditingFaq({
+                      ...editingFaq,
+                      display_order: Number(e.target.value),
+                    })
+                  }
+                />
+                <p className="text-[10px] text-muted-foreground italic">
+                  Lower numbers appear first.
+                </p>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFaqOpen(false)}>
+              <X className="h-4 w-4 mr-2" />
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveFaq}
+              className="bg-gradient-to-r from-primary to-accent text-primary-foreground hover:opacity-90"
+            >
+              <Save className="h-4 w-4 mr-2" /> Save FAQ
             </Button>
           </DialogFooter>
         </DialogContent>
